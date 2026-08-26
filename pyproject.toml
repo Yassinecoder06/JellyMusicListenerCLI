@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jellyfin-music-listener-cli"
+version = "1.1.0"
+description = "Terminal music listener for Jellyfin servers and locally organized Artist/Album (Year) folders"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=1.0",
+    "rich>=13.7",
+    "requests>=2.31",
+    "keyring>=25",
+    "python-mpv>=1.0.6",
+    "Pillow>=10.0",
+    "mutagen>=1.47",
+    "textual-image>=0.8",
+]
+
+[project.scripts]
+jmlcli = "music_listener.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["music_listener*"]
