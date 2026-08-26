@@ -6,6 +6,7 @@ The system library (libmpv.so.2) is loaded via ctypes, so the standalone
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Callable
 
@@ -19,6 +20,22 @@ except ImportError as error:  # pragma: no cover
 
 class PlayerError(Exception):
     pass
+
+
+def _ssh_audio_target() -> str | None:
+    if not (os.environ.get("SSH_TTY") or os.environ.get("SSH_CONNECTION")):
+        return None
+    target = os.environ.get("JMLCLI_SSH_AUDIO_TARGET", "SSH_Stream").strip()
+    return target or None
+
+
+def _matching_audio_device(devices: list[dict[str, Any]], target: str) -> str | None:
+    override = os.environ.get("JMLCLI_SSH_AUDIO_DEVICE", "").strip()
+    preferred = (f"pipewire/{target}", f"pulse/{target}")
+    names = {str(device.get("name", "")) for device in devices}
+    if override in names:
+        return override
+    return next((name for name in preferred if name in names), None)
 
 
 class PlayerStatus:
@@ -50,6 +67,8 @@ class MpvPlayer:
         self.on_end_of_track = on_end_of_track
         self._lock = threading.RLock()
         self._current_ref: str = ""
+        self._ssh_audio_target = _ssh_audio_target()
+        self._ssh_audio_device: str | None = None
         try:
             self._mpv: Any = mpv.MPV(
                 video=False,
@@ -63,6 +82,7 @@ class MpvPlayer:
             )
         except Exception as error:
             raise PlayerError(f"Could not initialize audio engine: {error}") from error
+        self._configure_ssh_audio()
 
         @self._mpv.event_callback(mpv.MpvEventID.END_FILE)
         def _on_end_file(event):  # noqa: ANN001 - python-mpv signature
@@ -93,6 +113,30 @@ class MpvPlayer:
     @property
     def current_ref(self) -> str:
         return self._current_ref
+
+    @property
+    def ssh_audio_status(self) -> str | None:
+        if self._ssh_audio_target is None:
+            return None
+        if self._ssh_audio_device:
+            return f"SSH audio routed to {self._ssh_audio_target}."
+        return (
+            f"SSH audio target {self._ssh_audio_target} is unavailable; "
+            "using the remote default output."
+        )
+
+    def _configure_ssh_audio(self) -> None:
+        target = self._ssh_audio_target
+        if target is None:
+            return
+        try:
+            devices = list(self._mpv.audio_device_list or [])
+            device = _matching_audio_device(devices, target)
+            if device:
+                self._mpv.audio_device = device
+                self._ssh_audio_device = device
+        except Exception:
+            pass
 
     def play(self, ref: str) -> None:
         with self._lock:

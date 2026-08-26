@@ -437,6 +437,8 @@ class ListenerApp(App):
                 on_end_of_track=lambda: self.call_from_thread(self.auto_advance)
             )
             self.player.set_volume(self.config.volume)
+            if status := self.player.ssh_audio_status:
+                self.notify(status, severity="warning" if "unavailable" in status else "information", timeout=10)
         except Exception as error:
             self.notify(
                 f"Audio engine unavailable: {error}", severity="error", timeout=12
@@ -530,14 +532,20 @@ class ListenerApp(App):
                 timeout=10,
             )
             return
-        stored = cfg.save_password(password)
+        storage = cfg.save_password(password)
         self._persist(server_url=url, username=user, active_source=SOURCE_JELLYFIN)
         self.call_from_thread(self._set_client, client)
-        if not stored:
+        if storage == "dotenv":
             self.call_from_thread(
                 self.notify,
-                "Connected, but the system keyring is unavailable — set "
-                "JELLYFIN_PASSWORD in your environment for automatic login.",
+                "Keyring unavailable; password saved in protected .env fallback.",
+                severity="warning",
+                timeout=12,
+            )
+        elif not storage:
+            self.call_from_thread(
+                self.notify,
+                "Connected, but the password could not be persisted.",
                 severity="warning",
                 timeout=12,
             )
@@ -571,7 +579,7 @@ class ListenerApp(App):
                     timeout=10,
                 )
                 return
-            stored = cfg.save_password(password)
+            storage = cfg.save_password(password)
             self._persist(
                 server_url=server,
                 username=user,
@@ -579,11 +587,17 @@ class ListenerApp(App):
                 music_folder=folder or self.config.music_folder,
             )
             self.call_from_thread(self._set_client, client)
-            if not stored:
+            if storage == "dotenv":
                 self.call_from_thread(
                     self.notify,
-                    "Keyring unavailable — set JELLYFIN_PASSWORD env var "
-                    "for automatic login.",
+                    "Keyring unavailable; password saved in protected .env fallback.",
+                    severity="warning",
+                    timeout=10,
+                )
+            elif not storage:
+                self.call_from_thread(
+                    self.notify,
+                    "Password could not be persisted.",
                     severity="warning",
                     timeout=10,
                 )

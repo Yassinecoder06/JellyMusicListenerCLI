@@ -28,6 +28,9 @@ def _detect_graphics_mode() -> str:
     except Exception:
         return "fallback"
     env = os.environ
+    override = env.get("JMLCLI_IMAGE_PROTOCOL", "").lower()
+    if override in {"tgp", "sixel", "fallback"}:
+        return override
     if env.get("TMUX") and not _tmux_allows_passthrough():
         return "fallback"
     marker = (env.get("TERM", "") + " " + env.get("TERM_PROGRAM", "")).lower()

@@ -66,7 +66,7 @@ jmlcli tui --local ~/music
 jmlcli tui --setup    # jump straight to setup
 ```
 
-First run shows the setup screen: fill the Jellyfin URL + username + password, and/or a local music folder. Both can be saved at once; F2 switches sources anytime. The password is stored in the OS keyring, never in files.
+First run shows the setup screen: fill the Jellyfin URL + username + password, and/or a local music folder. Both can be saved at once; F2 switches sources anytime. The password is stored in the OS keyring; when no keyring is available, it is saved in a user-only `.env` file beside the config.
 
 | Key | Action |
 | --- | --- |
@@ -93,7 +93,7 @@ jmlcli status                                   # config summary + live connecti
 jmlcli source local                             # switch default source (server|local)
 
 jmlcli setup --url https://jellyfin.example.me \
-             --username you --password s3cret   # one-time; password goes to keyring
+             --username you --password s3cret   # stored in keyring, or protected .env fallback
 jmlcli setup --folder ~/music                   # add/replace local library
 
 jmlcli search "midnight city"                   # table of matches
@@ -118,7 +118,7 @@ Exit codes: `0` success, `1` usage/resolution errors, `2` setup saved but login 
 
 ### Environment overrides
 
-See `.env.example`: `JELLYFIN_URL`, `JELLYFIN_USERNAME`, `JELLYFIN_PASSWORD`, `MUSIC_FOLDER` beat saved settings for headless/CI sessions.
+See `.env.example`: `JELLYFIN_URL`, `JELLYFIN_USERNAME`, `JELLYFIN_PASSWORD`, `MUSIC_FOLDER` beat saved settings for headless/CI sessions. Put these in `~/.config/jellyfin-music-listener/.env`; the file is loaded automatically and created with user-only permissions when keyring storage fails.
 
 ### tmux covers
 
@@ -131,6 +131,17 @@ set -g allow-passthrough on
 ```
 
 With passthrough enabled, `jmlcli` automatically uses the native image protocol through tmux; otherwise it stays on the reliable ANSI fallback.
+
+### SSH covers
+
+SSH passes terminal-image data through unchanged. `jmlcli` detects Kitty, Ghostty, WezTerm, and Sixel terminals from the forwarded terminal capability and shows the same cover remotely. If the SSH server replaces `TERM` with a generic value, explicitly select the protocol without exposing host details:
+
+```bash
+JMLCLI_IMAGE_PROTOCOL=tgp jmlcli      # Kitty/Ghostty/WezTerm
+JMLCLI_IMAGE_PROTOCOL=sixel jmlcli    # Sixel terminal
+```
+
+During an SSH session, `jmlcli` also looks for the PipeWire output target `SSH_Stream` and routes playback there when available. A local listener can capture that target and play it on the SSH client machine. If the target is absent, the app keeps the remote machine's default audio output and displays a warning instead of failing. Use `JMLCLI_SSH_AUDIO_TARGET=NAME` to select a differently named target. If your capture node and mpv output node have different names, set `JMLCLI_SSH_AUDIO_DEVICE=pipewire/OUTPUT_NAME` to the exact device reported by `mpv --audio-device=help`.
 
 ## Local folder layout
 
@@ -151,7 +162,7 @@ Audio: mp3, m4a, aac, flac, ogg, opus, wav, wma. Tags via mutagen when present, 
 
 - **Streaming**: direct download URLs authenticated with the session token (`/Items/{id}/Download?api_key=…`), decoded by libmpv. Progress is reported to `/Sessions/Playing*` so the Jellyfin dashboard reflects your listening.
 - **Covers**: fetched at original resolution and cached under `~/.cache/jellyfin-music-listener/covers/`; rendered through the Kitty graphics protocol or Sixel when the terminal supports them, otherwise as half-block ANSI.
-- **Config**: non-secret settings in `~/.config/jellyfin-music-listener/config.json` (user-only permissions); the password lives in the system keyring.
+- **Config**: non-secret settings in `~/.config/jellyfin-music-listener/config.json` (user-only permissions); the password lives in the system keyring or, when unavailable, a user-only `.env` fallback in the same directory.
 
 ## Tests
 

@@ -13,6 +13,7 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -122,6 +123,19 @@ class ConfigTests(unittest.TestCase):
             loaded = cfg.load_config()
             self.assertEqual(loaded.server_url, "http://x")
             self.assertTrue(loaded.device_id)
+
+    def test_keyring_failure_saves_and_loads_dotenv_password(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            old_dir, old_path = cfg.CONFIG_DIR, cfg.CONFIG_PATH
+            cfg.CONFIG_DIR = Path(tmp) / "cfg"
+            cfg.CONFIG_PATH = cfg.CONFIG_DIR / "config.json"
+            try:
+                with patch.dict(sys.modules, {"keyring": None}):
+                    self.assertEqual(cfg.save_password("secret value"), "dotenv")
+                self.assertEqual(cfg.get_password(), "secret value")
+                self.assertEqual(cfg.dotenv_path().stat().st_mode & 0o777, 0o600)
+            finally:
+                cfg.CONFIG_DIR, cfg.CONFIG_PATH = old_dir, old_path
 
     def test_fmt_duration(self):
         self.assertEqual(fmt_duration(None), "-:--")
@@ -338,6 +352,19 @@ class PlayerTests(unittest.TestCase):
         from music_listener.player import MpvPlayer
 
         return MpvPlayer()
+
+    def test_ssh_audio_target_uses_pipewire_or_pulse_device(self):
+        from music_listener.player import _matching_audio_device
+
+        devices = [
+            {"name": "pipewire/SSH_Stream"},
+            {"name": "pulse/SSH_Stream"},
+            {"name": "pipewire/SSH_Output"},
+        ]
+        self.assertEqual(_matching_audio_device(devices, "SSH_Stream"), "pipewire/SSH_Stream")
+        with patch.dict(os.environ, {"JMLCLI_SSH_AUDIO_DEVICE": "pipewire/SSH_Output"}):
+            self.assertEqual(_matching_audio_device(devices, "SSH_Stream"), "pipewire/SSH_Output")
+        self.assertIsNone(_matching_audio_device([], "SSH_Stream"))
 
     def test_play_pause_seek_volume_eof(self):
         try:

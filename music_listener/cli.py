@@ -161,9 +161,11 @@ def cmd_setup(args) -> int:
     url = updates.get("server_url", cfg.load_config().resolved_server())
     user = updates.get("username", cfg.load_config().resolved_username())
     if url and user and args.password is not None:
-        stored = cfg.save_password(args.password)
-        if not stored:
-            _ok("note: system keyring unavailable; password not persisted")
+        storage = cfg.save_password(args.password)
+        if storage == "dotenv":
+            _ok(f"password saved to protected fallback file: {cfg.dotenv_path()}")
+        elif not storage:
+            _ok("note: password could not be persisted")
         try:
             _connect_with_stored_type(url, user, args.password, config_device())
             _ok(f"connected to {url}")
@@ -171,8 +173,13 @@ def cmd_setup(args) -> int:
             auth_error = error
             _ok(f"warning: could not verify login: {error}")
     elif args.password is not None:
-        stored = cfg.save_password(args.password)
-        _ok("password stored" if stored else "note: system keyring unavailable")
+        storage = cfg.save_password(args.password)
+        if storage == "keyring":
+            _ok("password stored in the system keyring")
+        elif storage == "dotenv":
+            _ok(f"password saved to protected fallback file: {cfg.dotenv_path()}")
+        else:
+            _ok("note: password could not be persisted")
 
     cfg.update_config(**updates)
     _ok(f"settings saved to {cfg.CONFIG_PATH}")
@@ -261,6 +268,8 @@ def cmd_play(args) -> int:
         ref = client.stream_url(track.id)
 
     player = MpvPlayer()
+    if status := player.ssh_audio_status:
+        print(status, file=sys.stderr)
     player.play(ref)
     print(f"▶ {track.artist} — {track.title}  [{track.album}]")
 
@@ -420,7 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup = subs.add_parser("setup", help="configure server and/or local folder")
     p_setup.add_argument("--url", metavar="URL", help="Jellyfin server URL")
     p_setup.add_argument("--username", metavar="USER")
-    p_setup.add_argument("--password", metavar="PASS", help="stored in the system keyring")
+    p_setup.add_argument("--password", metavar="PASS", help="stored in the keyring or protected .env fallback")
     p_setup.add_argument("--folder", metavar="PATH", help="local music folder")
     p_setup.add_argument("--source", choices=["server", "local"], help="set active source")
     p_setup.set_defaults(func=cmd_setup, url=None, username=None, password=None,

@@ -1,9 +1,8 @@
 """Configuration and secret storage for Jellyfin Music Listener CLI.
 
 Non-secret settings live in a per-user JSON file under the XDG config
-directory.  The Jellyfin password is stored in the operating system
-keyring when available; environment variables override everything for
-headless sessions.
+directory. The Jellyfin password is stored in the operating system keyring
+when available, with a user-only dotenv fallback for headless sessions.
 """
 
 from __future__ import annotations
@@ -45,20 +44,94 @@ class AppConfig:
     device_id: str = ""
 
     def resolved_server(self) -> str:
-        return os.environ.get("JELLYFIN_URL", self.server_url).strip()
+        return _environment_value("JELLYFIN_URL", self.server_url).strip()
 
     def resolved_username(self) -> str:
-        return os.environ.get("JELLYFIN_USERNAME", self.username).strip()
+        return _environment_value("JELLYFIN_USERNAME", self.username).strip()
 
     def resolved_music_folder(self) -> str:
-        folder = os.environ.get("MUSIC_FOLDER", self.music_folder).strip()
+        folder = _environment_value("MUSIC_FOLDER", self.music_folder).strip()
         if not folder:
             return ""
         return str(Path(folder).expanduser())
 
 
 def _env_password() -> str:
-    return os.environ.get("JELLYFIN_PASSWORD", "").strip()
+    return _environment_value("JELLYFIN_PASSWORD", "").strip()
+
+
+def dotenv_path() -> Path:
+    return CONFIG_PATH.with_name(".env")
+
+
+def _dotenv_values() -> dict[str, str]:
+    try:
+        lines = dotenv_path().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, value = line.partition("=")
+        if not separator or not key.isidentifier():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = value[1:-1]
+        elif len(value) >= 2 and value[0] == value[-1] == "'":
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _environment_value(name: str, default: str) -> str:
+    if name in os.environ:
+        return os.environ[name]
+    return _dotenv_values().get(name, default)
+
+
+def _dotenv_key(line: str) -> str:
+    line = line.strip()
+    if line.startswith("export "):
+        line = line[7:].lstrip()
+    return line.partition("=")[0].strip()
+
+
+def _save_dotenv_password(password: str) -> bool:
+    path = dotenv_path()
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_DIR.chmod(stat.S_IRWXU)
+        entry = f"JELLYFIN_PASSWORD={json.dumps(password)}\n"
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        except OSError:
+            lines = []
+        replaced = False
+        updated = []
+        for line in lines:
+            if _dotenv_key(line) == "JELLYFIN_PASSWORD":
+                if not replaced:
+                    updated.append(entry)
+                    replaced = True
+                continue
+            updated.append(line)
+        if not replaced:
+            updated.append(entry)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("".join(updated), encoding="utf-8")
+        tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        tmp.replace(path)
+        return True
+    except OSError:
+        return False
 
 
 def _read_saved() -> dict[str, Any]:
@@ -120,17 +193,17 @@ def get_password() -> str:
         return ""
 
 
-def save_password(password: str) -> bool:
+def save_password(password: str) -> str:
     password = password.strip()
     if not password:
-        return False
+        return ""
     try:
         import keyring
 
         keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, password)
-        return True
+        return "keyring"
     except Exception:
-        return False
+        return "dotenv" if _save_dotenv_password(password) else ""
 
 
 def clear_password() -> None:
@@ -139,6 +212,17 @@ def clear_password() -> None:
 
         keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
     except Exception:
+        pass
+    path = dotenv_path()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        kept = [line for line in lines if _dotenv_key(line) != "JELLYFIN_PASSWORD"]
+        if kept:
+            path.write_text("".join(kept), encoding="utf-8")
+            path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        else:
+            path.unlink()
+    except OSError:
         pass
 
 
