@@ -120,6 +120,18 @@ Exit codes: `0` success, `1` usage/resolution errors, `2` setup saved but login 
 
 See `.env.example`: `JELLYFIN_URL`, `JELLYFIN_USERNAME`, `JELLYFIN_PASSWORD`, `MUSIC_FOLDER` beat saved settings for headless/CI sessions.
 
+### tmux covers
+
+tmux blocks native terminal-image escape sequences unless passthrough is enabled. The app detects this and uses its compatible ANSI cover renderer, so artwork remains visible inside ordinary tmux sessions.
+
+For true-resolution Ghostty/Kitty covers inside tmux 3.3+, add this to `~/.tmux.conf`, then restart tmux:
+
+```tmux
+set -g allow-passthrough on
+```
+
+With passthrough enabled, `jmlcli` automatically uses the native image protocol through tmux; otherwise it stays on the reliable ANSI fallback.
+
 ## Local folder layout
 
 Matches the Jellyfin organizer convention:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import subprocess
 import sys
 
 from rich.text import Text
@@ -27,17 +28,34 @@ def _detect_graphics_mode() -> str:
     except Exception:
         return "fallback"
     env = os.environ
+    if env.get("TMUX") and not _tmux_allows_passthrough():
+        return "fallback"
+    marker = (env.get("TERM", "") + " " + env.get("TERM_PROGRAM", "")).lower()
     if (
         env.get("KITTY_WINDOW_ID")
         or env.get("GHOSTTY_RESOURCES_DIR")
         or env.get("GHOSTTY_BIN_DIR")
         or env.get("WEZTERM_EXECUTABLE")
+        or any(name in marker for name in ("kitty", "ghostty", "wezterm"))
     ):
         return "tgp"
-    marker = (env.get("TERM", "") + " " + env.get("TERM_PROGRAM", "")).lower()
     if any(name in marker for name in ("sixel", "mlterm", "foot", "mintty")):
         return "sixel"
     return "fallback"
+
+
+def _tmux_allows_passthrough() -> bool:
+    try:
+        result = subprocess.run(
+            ["tmux", "show-options", "-gv", "allow-passthrough"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.strip().lower() == "on"
 
 
 class CoverWidget(Vertical):
