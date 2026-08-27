@@ -82,10 +82,16 @@ class MockJellyfin(BaseHTTPRequestHandler):
         if path == "/Users/user-1":
             self._json({"Id": "user-1", "Name": "tester"})
             return
+        if path == "/Users/user-1/Views":
+            self._json({"Items": [{"Id": "music-1", "Name": "Music", "CollectionType": "music"}]})
+            return
         if path == "/Items":
             params = dict(p.split("=", 1) for p in self.path.split("?")[1].split("&") if "=" in p)
             include = params.get("includeItemTypes", "")
             parent = params.get("parentId", "")
+            if include == "MusicArtist":
+                self._json({"Items": MockJellyfin.items["artists"], "TotalRecordCount": 1})
+                return
             if include == "MusicAlbum":
                 self._json({"Items": MockJellyfin.items["albums"], "TotalRecordCount": 1})
                 return
@@ -231,19 +237,19 @@ class JellyfinClientTests(unittest.TestCase):
                 {
                     "Id": "album-9",
                     "Name": "Great Hits",
-                    "AlbumArtist": "The Mocks",
                     "ProductionYear": 2020,
                     "ChildCount": 2,
-                    "AlbumArtists": [{"Id": "artist-1", "Name": "The Mocks"}],
+                    "ParentId": "artist-1",
                 }
+            ],
+            "artists": [
+                {"Id": "artist-1", "Name": "The Mocks", "ChildCount": 1}
             ],
             "album_tracks": [
                 {
                     "Id": "tr-1",
                     "Name": "First Song",
-                    "Album": "Great Hits",
-                    "AlbumId": "album-9",
-                    "Artists": ["The Mocks"],
+                    "ParentId": "album-9",
                     "IndexNumber": 1,
                     "RunTimeTicks": 180_000_000 * 10,
                     "ProductionYear": 2020,
@@ -251,9 +257,7 @@ class JellyfinClientTests(unittest.TestCase):
                 {
                     "Id": "tr-2",
                     "Name": "Second Song",
-                    "Album": "Great Hits",
-                    "AlbumId": "album-9",
-                    "Artists": ["The Mocks"],
+                    "ParentId": "album-9",
                     "IndexNumber": 2,
                     "RunTimeTicks": 200_000_000 * 10,
                 },
@@ -292,16 +296,25 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertEqual(client.user_id, "user-1")
 
         artists = client.artists()
-        self.assertEqual(artists, [])
+        self.assertEqual([artist.name for artist in artists], ["The Mocks"])
 
         albums = client.albums()
         self.assertEqual(len(albums), 1)
+        self.assertEqual(albums[0].artist, "The Mocks")
         self.assertEqual(albums[0].cover_key, "album-9")
         self.assertEqual(albums[0].year, 2020)
 
+        artist_albums = client.albums(artist_id="artist-1")
+        self.assertEqual([album.id for album in artist_albums], ["album-9"])
+
         tracks = client.album_tracks("album-9")
         self.assertEqual([t.title for t in tracks], ["First Song", "Second Song"])
+        self.assertEqual((tracks[0].artist, tracks[0].album), ("The Mocks", "Great Hits"))
         self.assertAlmostEqual(tracks[0].duration, 180.0)
+
+        fresh_client = connect(self.url, "tester", "secret", device_id="dev43")
+        all_tracks = fresh_client.all_tracks()
+        self.assertEqual((all_tracks[0].artist, all_tracks[0].album), ("The Mocks", "Great Hits"))
 
         url = client.stream_url("tr-1")
         self.assertIn("/Items/tr-1/Download", url)

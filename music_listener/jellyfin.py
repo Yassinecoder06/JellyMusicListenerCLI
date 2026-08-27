@@ -19,7 +19,7 @@ from . import config as cfg
 CLIENT_NAME = "Jellyfin Music Listener CLI"
 APP_VERSION = "1.0.0"
 
-AUDIO_FIELDS = "RunTimeTicks,ProductionYear,Path"
+AUDIO_FIELDS = "RunTimeTicks,ProductionYear,ParentId,AlbumId,Album,Artists,ArtistItems,AlbumArtist"
 
 
 class JellyfinError(Exception):
@@ -183,25 +183,43 @@ class JellyfinClient:
                 libs.append({"id": item["Id"], "name": item.get("Name", "Music")})
         return libs
 
+    def _music_library_items(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        libraries = self.music_libraries()
+        if not libraries:
+            return self.get_json("/Items", params).get("Items", [])
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for library in libraries:
+            data = self.get_json("/Items", {**params, "parentId": library["id"]})
+            for item in data.get("Items", []):
+                item_id = item.get("Id", "")
+                if item_id and item_id not in seen:
+                    seen.add(item_id)
+                    items.append(item)
+        return items
+
     def artists(self, limit: int = 10000) -> list[Artist]:
-        data = self.get_json(
-            "/Artists",
-            {
-                "userId": self.user_id,
-                "sortBy": "SortName",
-                "sortOrder": "Ascending",
-                "recursive": "true",
-                "limit": limit,
-                "api_key": self.token,
-            },
-        )
+        params: dict[str, Any] = {
+            "userId": self.user_id,
+            "includeItemTypes": "MusicArtist",
+            "sortBy": "SortName",
+            "sortOrder": "Ascending",
+            "recursive": "true",
+            "fields": "AlbumCount,ChildCount",
+            "limit": limit,
+            "api_key": self.token,
+        }
+        items = self._music_library_items(params)
+        if not items:
+            data = self.get_json("/Artists", params)
+            items = data.get("Items", [])
         out = []
-        for item in data.get("Items", []):
+        for item in items:
             out.append(
                 Artist(
                     id=item["Id"],
                     name=item.get("Name", "?"),
-                    album_count=item.get("AlbumCount", 0) or 0,
+                    album_count=item.get("AlbumCount") or item.get("ChildCount", 0) or 0,
                     source=SOURCE_JELLYFIN,
                 )
             )
@@ -214,21 +232,26 @@ class JellyfinClient:
             "includeItemTypes": "MusicAlbum",
             "sortBy": "SortName",
             "sortOrder": "Ascending",
-            "fields": "ProductionYear",
+            "fields": "ProductionYear,AlbumArtist,AlbumArtists,ArtistItems,ChildCount,ParentId",
             "enableTotalRecordCount": "false",
             "api_key": self.token,
         }
         if artist_id:
-            params["albumArtistIds"] = artist_id
-        data = self.get_json("/Items", params)
+            data = self.get_json("/Items", {**params, "parentId": artist_id})
+            items = data.get("Items", [])
+            if not items:
+                data = self.get_json("/Items", {**params, "albumArtistIds": artist_id})
+                items = data.get("Items", [])
+        else:
+            items = self._music_library_items(params)
+        artist_names = {artist.id: artist.name for artist in self.artists()}
         albums = []
-        for item in data.get("Items", []):
+        for item in items:
             artist = item.get("AlbumArtist", "")
-            artist_id_found = ""
             artists_list = item.get("AlbumArtists") or []
             if artists_list:
                 artist = artist or artists_list[0].get("Name", "")
-                artist_id_found = artists_list[0].get("Id", "")
+            artist = artist or artist_names.get(item.get("ParentId", ""), "")
             albums.append(
                 Album(
                     id=item["Id"],
@@ -240,9 +263,14 @@ class JellyfinClient:
                     cover_key=item["Id"],
                 )
             )
-            if artist_id and artist_id_found and artist_id_found != artist_id:
-                continue
+        if artist_id is None:
+            self.album_cache = albums
         return albums
+
+    def _albums_by_id(self) -> dict[str, Album]:
+        if self.album_cache is None:
+            self.album_cache = self.albums()
+        return {album.id: album for album in self.album_cache}
 
     def album_tracks(self, album_id: str) -> list[Track]:
         return self._audio_items(
@@ -269,22 +297,26 @@ class JellyfinClient:
         params.update(extra)
         data = self.get_json("/Items", params)
         tracks = []
+        albums = self._albums_by_id()
         for item in data.get("Items", []):
             ticks = item.get("RunTimeTicks") or 0
             artists_list = item.get("Artists") or []
+            album_id = item.get("AlbumId") or item.get("ParentId") or ""
+            album_info = albums.get(album_id)
             artist = (
                 artists_list[0]
                 if artists_list
                 else ((item.get("ArtistItems") or [{}])[0].get("Name", ""))
                 or item.get("AlbumArtist", "")
+                or (album_info.artist if album_info else "")
             )
             tracks.append(
                 Track(
                     id=item["Id"],
                     title=item.get("Name", "?"),
                     artist=artist or "?",
-                    album=item.get("Album", ""),
-                    album_id=(item.get("AlbumId") or ""),
+                    album=item.get("Album", "") or (album_info.name if album_info else ""),
+                    album_id=album_id,
                     year=item.get("ProductionYear"),
                     track_number=item.get("IndexNumber"),
                     duration=ticks / 10_000_000.0 if ticks else None,
