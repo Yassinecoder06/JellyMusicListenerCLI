@@ -7,6 +7,11 @@ PYTHON="${PYTHON:-python3}"
 
 print_install_command() {
     local tool="$1"
+    local apt_tool="$tool" dnf_tool="$tool" arch_tool="$tool"
+    if [ "$tool" = "mpv" ]; then
+        apt_tool="libmpv-dev libmpv2"
+        dnf_tool="mpv-libs-devel"
+    fi
     case "$(uname -s)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
@@ -17,11 +22,11 @@ print_install_command() {
             ;;
         Linux)
             if command -v apt-get >/dev/null 2>&1; then
-                printf '%s\n' "Install $tool with: sudo apt-get install $tool"
+                printf '%s\n' "Install $tool with: sudo apt update && sudo apt install -y $apt_tool"
             elif command -v dnf >/dev/null 2>&1; then
-                printf '%s\n' "Install $tool with: sudo dnf install $tool"
+                printf '%s\n' "Install $tool with: sudo dnf install -y $dnf_tool"
             elif command -v pacman >/dev/null 2>&1; then
-                printf '%s\n' "Install $tool with: sudo pacman -S $tool"
+                printf '%s\n' "Install $tool with: sudo pacman -S --needed $arch_tool"
             elif command -v zypper >/dev/null 2>&1; then
                 printf '%s\n' "Install $tool with: sudo zypper install $tool"
             else
@@ -59,7 +64,8 @@ configure_local_bin_path() {
     if [ "$is_fish" -eq 0 ] && ! grep -Fq "$marker" "$profile" 2>/dev/null; then
         printf '%s\n' "$marker" 'export PATH="$HOME/.local/bin:$PATH"' >> "$profile"
     fi
-    printf '%s\n' "Configured $profile to include ~/.local/bin. Open a new terminal to use jmlcli."
+    printf '%s\n' "Configured $profile to include ~/.local/bin."
+    printf 'Run now: source "%s"\n' "$profile"
 }
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
