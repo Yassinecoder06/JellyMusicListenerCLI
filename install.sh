@@ -34,6 +34,34 @@ print_install_command() {
     esac
 }
 
+configure_local_bin_path() {
+    local profile marker is_fish=0
+    marker="# Added by Jellyfin CLI installers"
+    case "${SHELL:-}" in
+        */fish)
+            profile="$HOME/.config/fish/config.fish"
+            is_fish=1
+            mkdir -p "$(dirname "$profile")"
+            if ! grep -Fq "$marker" "$profile" 2>/dev/null; then
+                printf '%s\n' "$marker" 'fish_add_path "$HOME/.local/bin"' >> "$profile"
+            fi
+            ;;
+        */zsh)
+            profile="$HOME/.zshrc"
+            ;;
+        */bash)
+            profile="$HOME/.bashrc"
+            ;;
+        *)
+            profile="$HOME/.profile"
+            ;;
+    esac
+    if [ "$is_fish" -eq 0 ] && ! grep -Fq "$marker" "$profile" 2>/dev/null; then
+        printf '%s\n' "$marker" 'export PATH="$HOME/.local/bin:$PATH"' >> "$profile"
+    fi
+    printf '%s\n' "Configured $profile to include ~/.local/bin. Open a new terminal to use jmlcli."
+}
+
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
     printf '%s\n' "Python 3 is required. Install Python 3.10+ and run this again." >&2
     exit 1
@@ -55,7 +83,7 @@ ln -sfn "$VENV/bin/jmlcli" "$HOME/.local/bin/jmlcli"
 printf '%s\n' "Installed jmlcli. Launch it with: jmlcli"
 case ":${PATH}:" in
     *":$HOME/.local/bin:"*) ;;
-    *) printf '%s\n' "Add ~/.local/bin to PATH, then open a new terminal before running jmlcli." ;;
+    *) configure_local_bin_path ;;
 esac
 
 if ! "$VENV/bin/python" -c 'import mpv' >/dev/null 2>&1; then
