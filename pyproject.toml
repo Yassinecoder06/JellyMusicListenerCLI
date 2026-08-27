@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jellyfin-music-listener-cli"
-version = "1.1.1"
+version = "1.1.2"
 description = "Terminal music listener for Jellyfin servers and locally organized Artist/Album (Year) folders"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -34,7 +34,7 @@ cd JellyfinMusicListenerCLI
 ./install.sh
 ```
 
-The installer creates or repairs `.venv`, installs every Python dependency, and registers `jmlcli` under `~/.local/bin`. It does not use `sudo`.
+The installer creates or repairs `.venv`, installs every Python dependency, and registers `jmlcli` under `~/.local/bin`. It does not use `sudo`; if `libmpv` is unavailable, it prints the appropriate manual install command for your platform.
 
 Open a new terminal if needed, then run:
 

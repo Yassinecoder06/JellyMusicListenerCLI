@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "jellyfin-music-listener"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 
 
 # ---------------------------------------------------------------- helpers
