@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from music_listener import config as cfg  # noqa: E402
-from music_listener import coverart, locallib  # noqa: E402
+from music_listener import coverart, locallib, localplaylists  # noqa: E402
 from music_listener.jellyfin import JellyfinClient, JellyfinError, connect  # noqa: E402
 from music_listener.models import Album, Track, fmt_duration  # noqa: E402
 
@@ -140,6 +140,29 @@ class ConfigTests(unittest.TestCase):
                     self.assertEqual(cfg.save_password("secret value"), "dotenv")
                 self.assertEqual(cfg.get_password(), "secret value")
                 self.assertEqual(cfg.dotenv_path().stat().st_mode & 0o777, 0o600)
+            finally:
+                cfg.CONFIG_DIR, cfg.CONFIG_PATH = old_dir, old_path
+
+    def test_local_playlists_preserve_track_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_dir, old_path = cfg.CONFIG_DIR, cfg.CONFIG_PATH
+            cfg.CONFIG_DIR = Path(tmp) / "cfg"
+            cfg.CONFIG_PATH = cfg.CONFIG_DIR / "config.json"
+            tracks = [
+                Track(id="/music/one.mp3", title="One", artist="Artist", album="Album", source="local"),
+                Track(id="/music/two.mp3", title="Two", artist="Artist", album="Album", source="local"),
+            ]
+            try:
+                playlist = localplaylists.create("Road Trip", [tracks[0].id])
+                localplaylists.add_tracks(playlist.id, [tracks[1].id])
+                listed = localplaylists.playlists(tracks)
+                self.assertEqual((listed[0].name, listed[0].track_count), ("Road Trip", 2))
+                entries = localplaylists.tracks(playlist.id, tracks)
+                self.assertEqual((entries[0].title, entries[0].artist, entries[0].album), ("One", "Artist", "Album"))
+                localplaylists.remove_tracks(playlist.id, [tracks[0].id])
+                self.assertEqual([entry.id for entry in localplaylists.tracks(playlist.id, tracks)], [tracks[1].id])
+                localplaylists.delete(playlist.id)
+                self.assertEqual(localplaylists.playlists(tracks), [])
             finally:
                 cfg.CONFIG_DIR, cfg.CONFIG_PATH = old_dir, old_path
 
@@ -269,8 +292,7 @@ class JellyfinClientTests(unittest.TestCase):
                 {
                     "Id": "tr-1",
                     "Name": "First Song",
-                    "AlbumId": "album-9",
-                    "Artists": ["The Mocks"],
+                    "ParentId": "album-9",
                     "RunTimeTicks": 180_000_000 * 10,
                     "PlaylistItemId": "entry-77",
                 }
@@ -329,6 +351,7 @@ class JellyfinClientTests(unittest.TestCase):
         self.assertEqual(playlists[0].name, "Road Trip")
         entries = client.playlist_tracks("pl-1")
         self.assertEqual(entries[0].playlist_entry_id, "entry-77")
+        self.assertEqual((entries[0].title, entries[0].artist, entries[0].album), ("First Song", "The Mocks", "Great Hits"))
 
         new_id = client.create_playlist("Mix", ["tr-1"])
         self.assertEqual(new_id, "")

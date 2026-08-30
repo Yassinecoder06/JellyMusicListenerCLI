@@ -341,6 +341,71 @@ def cmd_library(args) -> int:
     return 0
 
 
+def cmd_organize(args) -> int:
+    from rich.console import Console
+    from rich.table import Table
+
+    from .organizer import organize, preview_organize
+
+    source = Path(args.source).expanduser() if args.source else None
+    if source is None:
+        # default to music folder or current dir?
+        cfg = _load_config()
+        src_str = cfg.resolved_music_folder()
+        if not src_str:
+            return _fail("No source provided and no music folder configured. Provide a path: jmlcli organize /path/to/music")
+        source = Path(src_str).expanduser()
+    if not source.exists():
+        return _fail(f"Source does not exist: {source}")
+    dest_root = Path(args.dest).expanduser() if args.dest else None
+    if dest_root is None:
+        cfg = _load_config()
+        d = cfg.resolved_music_folder()
+        if not d:
+            return _fail("No music destination configured. Use --dest or jmlcli setup --folder PATH")
+        dest_root = Path(d).expanduser()
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    console = Console()
+    if args.dry_run or args.preview:
+        ops = preview_organize(source, dest_root, use_musicbrainz=args.musicbrainz)
+        table = Table(box=None, header_style="bold")
+        table.add_column("CURRENT", style="dim")
+        table.add_column("→", justify="center")
+        table.add_column("PROPOSED")
+        table.add_column("Status", style="cyan")
+        for op in ops[: args.limit]:
+            table.add_row(str(op.source), "→", str(op.destination), f"{op.status} {op.message}")
+        console.print(table)
+        console.print(f"[dim]Previewed {len(ops)} files. Run without --dry-run to execute.[/dim]")
+        # Also show metadata preview for first item
+        if ops:
+            m = ops[0].metadata
+            console.print(f"[bold]Example metadata:[/bold] Artist={m.artist} AlbumArtist={m.album_artist} Album={m.album} Title={m.title} Track={m.track_number} Disc={m.disc_number} Year={m.year}")
+        return 0
+
+    # Execute
+    def status_cb(msg: str):
+        console.print(f"[dim]{msg}[/dim]")
+    result = organize(source, dest_root, use_musicbrainz=args.musicbrainz, dry_run=False, status=status_cb)
+    console.print(f"[green]Organize complete:[/green] copied={result['copied']} skipped={result['skipped']} failed={result['failed']} needs_review={result['needs_review']}")
+    if args.refresh:
+        try:
+            cfg = _load_config()
+            from .organizer import trigger_jellyfin_rescan
+            from . import config as cfg2
+
+            # try to get token via jellyfin client
+            try:
+                client = _connect_with_stored(cfg)
+                trigger_jellyfin_rescan(client.base_url, client.token)
+            except Exception:
+                console.print("[yellow]Jellyfin refresh skipped (not connected)[/yellow]")
+        except Exception as e:
+            console.print(f"[yellow]Jellyfin refresh failed: {e}[/yellow]")
+    return 0
+
+
 def cmd_playlist(args) -> int:
     action = args.action
     config = _load_config()
@@ -413,7 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="jmlcli",
         description=(
             "Terminal music listener for Jellyfin servers and local "
-            "Artist/Album (Year)/ folders. Run without arguments for the "
+            "Artist/Album/ folders. Run without arguments for the "
             "interactive player."
         ),
     )
@@ -489,6 +554,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_pl_del = pl_subs.add_parser("delete", help="delete a playlist")
     p_pl_del.add_argument("playlist")
     p_pl_del.set_defaults(func=cmd_playlist)
+
+    p_org = subs.add_parser("organize", help="organize music into Jellyfin Artist/Album layout")
+    p_org.add_argument("source", nargs="?", help="source file or folder to organize (default: configured music folder)")
+    p_org.add_argument("--dest", metavar="PATH", help="Music root destination (default: configured music folder)")
+    p_org.add_argument("--dry-run", action="store_true", help="preview without moving files")
+    p_org.add_argument("--preview", action="store_true", help="alias for --dry-run")
+    p_org.add_argument("--musicbrainz", action="store_true", help="attempt MusicBrainz identification")
+    p_org.add_argument("--refresh", action="store_true", help="trigger Jellyfin library refresh after organize")
+    p_org.add_argument("--limit", type=int, default=50, help="limit preview rows")
+    p_org.set_defaults(func=cmd_organize)
 
     return parser
 

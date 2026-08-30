@@ -1,6 +1,6 @@
 # Jellyfin Music Listener CLI (`jmlcli`)
 
-A keyboard-first terminal music listener for Jellyfin. Browse artists, albums, tracks and playlists from your Jellyfin server — or a local `Artist/Album (Year)/` folder — with album covers drawn at their **true resolution** inside the terminal, full playback control, and instant playlist management from the TUI or the shell.
+A keyboard-first terminal music listener for Jellyfin. Browse artists, albums, tracks and playlists from your Jellyfin server — or a local `Artist/Album/` folder — with album covers drawn at their **true resolution** inside the terminal, full playback control, and instant playlist management from the TUI or the shell.
 
 ```
 ♪ Jellyfin Music Listener CLI  │  [SERVER] https://jellyfin.example.me · you
@@ -18,7 +18,7 @@ A keyboard-first terminal music listener for Jellyfin. Browse artists, albums, t
 
 - **Two first-class sources**: your Jellyfin server (streaming, playlist sync, now-playing reporting) and local folders organized the Jellyfin way. Press **F2** to flip between them instantly.
 - **True-resolution covers**: artwork is sent through the terminal's native image protocol — Kitty graphics protocol on ghostty/kitty/WezTerm, Sixel elsewhere — scaled pixel-perfect to fit its frame. Basic terminals fall back to half-block rendering automatically.
-- **Playlists anywhere**: build and edit server playlists from the TUI (`a`/`n`/`d`) or straight from the shell (`jmlcli playlist add "Road Trip" "city lights"`).
+- **Source-aware playlists**: build and edit Jellyfin playlists on the server, or private local playlists when browsing a music folder. Local playlists store track paths on this machine and retain title, artist, and album metadata.
 - **Scriptable CLI**: search, play, browse and manage everything without opening the TUI.
 
 ## Requirements
@@ -145,12 +145,12 @@ During an SSH session, `jmlcli` also looks for the PipeWire output target `SSH_S
 
 ## Local folder layout
 
-Matches the Jellyfin organizer convention:
+Matches the organizer convention:
 
 ```text
 MUSIC_FOLDER/
 └── Artist/
-    └── Album (Year)/
+    └── Album/
         ├── 01 - Title.mp3
         ├── 07 - Another.flac
         └── cover.jpg
@@ -162,7 +162,7 @@ Audio: mp3, m4a, aac, flac, ogg, opus, wav, wma. Tags via mutagen when present, 
 
 - **Streaming**: direct download URLs authenticated with the session token (`/Items/{id}/Download?api_key=…`), decoded by libmpv. Progress is reported to `/Sessions/Playing*` so the Jellyfin dashboard reflects your listening.
 - **Covers**: fetched at original resolution and cached under `~/.cache/jellyfin-music-listener/covers/`; rendered through the Kitty graphics protocol or Sixel when the terminal supports them, otherwise as half-block ANSI.
-- **Config**: non-secret settings in `~/.config/jellyfin-music-listener/config.json` (user-only permissions); the password lives in the system keyring or, when unavailable, a user-only `.env` fallback in the same directory.
+- **Config**: non-secret settings in `~/.config/jellyfin-music-listener/config.json` (user-only permissions); local playlists live in `local-playlists.json` beside it. The password lives in the system keyring or, when unavailable, a user-only `.env` fallback in the same directory.
 
 ## Tests
 
@@ -186,6 +186,7 @@ music_listener/
 ├── player.py               libmpv engine wrapper
 ├── config.py               settings file + keyring secrets
 ├── models.py               shared Track/Album/Artist/Playlist types
+├── localplaylists.py        private local playlist storage
 └── widgets/
     ├── cover.py            true-resolution (TGP/Sixel) + fallback covers
     └── nowplaying.py       bottom now-playing bar

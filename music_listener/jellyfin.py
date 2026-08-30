@@ -359,22 +359,27 @@ class JellyfinClient:
             {"userId": self.user_id, "api_key": self.token},
         )
         tracks = []
+        albums = self._albums_by_id()
         for entry in data.get("Items", []):
             item = entry
             ticks = item.get("RunTimeTicks") or 0
             artists_list = item.get("Artists") or []
+            album_id = item.get("AlbumId") or item.get("ParentId") or ""
+            album_info = albums.get(album_id)
             artist = (
                 artists_list[0]
                 if artists_list
                 else ((item.get("ArtistItems") or [{}])[0].get("Name", ""))
+                or item.get("AlbumArtist", "")
+                or (album_info.artist if album_info else "")
             )
             tracks.append(
                 Track(
                     id=item["Id"],
                     title=item.get("Name", "?"),
                     artist=artist or "?",
-                    album=item.get("Album", ""),
-                    album_id=item.get("AlbumId", ""),
+                    album=item.get("Album", "") or (album_info.name if album_info else ""),
+                    album_id=album_id,
                     year=item.get("ProductionYear"),
                     duration=ticks / 10_000_000.0 if ticks else None,
                     source=SOURCE_JELLYFIN,

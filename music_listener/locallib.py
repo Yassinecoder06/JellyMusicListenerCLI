@@ -1,9 +1,11 @@
 """Local library scanner for Jellyfin-style folder layouts.
 
-Expected layout (matching the Jellyfin Music Downloader organizer):
+Expected layout:
 
-    ROOT/Artist/Album (Year)/01 - Title.mp3
-    ROOT/Artist/Album (Year)/cover.jpg
+    ROOT/Artist/Album/01 - Title.mp3
+    ROOT/Artist/Album/cover.jpg
+
+Older libraries using ``Album (Year)`` are still recognized.
 
 Loose audio files directly under ROOT are grouped into "[No Artist]".
 """
@@ -194,6 +196,73 @@ def _track_from_file(
     year: int | None,
     album_id: str,
 ) -> Track:
+    # Use canonical engine for richer metadata (disc, genre, MBIDs, album_artist)
+    try:
+        from .metadata import extract_existing_metadata
+
+        meta = extract_existing_metadata(path)
+        # Prefer folder fallback for album/artist if tags were unknown
+        title = meta.title or _clean(path.stem)
+        artist = meta.artist if meta.artist != "Unknown Artist" else artist_fallback
+        # For Singles singles/loose files, preserve the fallback album name
+        if album_fallback in ("[Singles]", "[No Album]"):
+            album = album_fallback
+        else:
+            album = meta.album if meta.album != "Unknown Album" else album_fallback
+        album_artist = meta.album_artist
+        track_num = meta.track_number
+        disc_num = meta.disc_number
+        # If filename had 1-01 disc prefix, ensure disc parsed
+        if disc_num == 1:
+            # check if stem was 1-01 - Title
+            m = re.match(r"^(\d+)-(\d{1,3})\s*[-._]\s*(.+)$", path.stem)
+            if m:
+                try:
+                    disc_num = int(m.group(1))
+                    track_num = int(m.group(2))
+                except ValueError:
+                    pass
+        # Duration via mutagen info
+        duration = None
+        try:
+            from mutagen import File as MutagenFile
+
+            audio = MutagenFile(str(path), easy=True)
+            if audio is not None and audio.info is not None:
+                duration = float(getattr(audio.info, "length", 0) or 0) or None
+        except Exception:
+            pass
+        # Year fallback
+        y = None
+        if meta.year:
+            try:
+                y = int(meta.year)
+            except ValueError:
+                y = year
+        else:
+            y = year
+        return Track(
+            id=str(path.resolve()),
+            title=_clean(title) or path.name,
+            artist=_clean(artist) or artist_fallback,
+            album=_clean(album) or album_fallback,
+            album_id=album_id,
+            year=y,
+            track_number=track_num,
+            disc_number=disc_num,
+            genre=meta.genre or None,
+            album_artist=_clean(album_artist) if album_artist else artist_fallback,
+            duration=duration,
+            source=SOURCE_LOCAL,
+            stream_ref=str(path.resolve()),
+            cover_key=f"local:{album_id}" if album_id else "",
+            mb_artist_id=meta.mb_artist_id or None,
+            mb_album_id=meta.mb_album_id or None,
+            mb_recording_id=meta.mb_recording_id or None,
+            needs_review=meta.needs_review,
+        )
+    except Exception:
+        pass
     number: int | None = None
     title = path.stem
     match = TRACK_NUMBER_RE.match(title)

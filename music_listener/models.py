@@ -28,11 +28,18 @@ class Track:
     album_id: str = ""
     year: int | None = None
     track_number: int | None = None
+    disc_number: int | None = None
+    genre: str | None = None
+    album_artist: str | None = None
     duration: float | None = None
     source: str = SOURCE_JELLYFIN
     stream_ref: str = ""
     cover_key: str = ""
     playlist_entry_id: str | None = None
+    mb_artist_id: str | None = None
+    mb_album_id: str | None = None
+    mb_recording_id: str | None = None
+    needs_review: bool = False
 
     @property
     def duration_text(self) -> str:
@@ -51,6 +58,9 @@ class Album:
     track_count: int = 0
     source: str = SOURCE_JELLYFIN
     cover_key: str = ""
+    genre: str | None = None
+    mb_album_id: str | None = None
+    mb_release_id: str | None = None
 
 
 @dataclass
@@ -59,6 +69,8 @@ class Artist:
     name: str
     album_count: int = 0
     source: str = SOURCE_JELLYFIN
+    normalized_name: str = ""
+    mb_artist_id: str | None = None
 
 
 @dataclass

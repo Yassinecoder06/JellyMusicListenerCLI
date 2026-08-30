@@ -26,6 +26,7 @@ from textual.widgets.option_list import Option
 
 from . import config as cfg
 from . import coverart
+from . import localplaylists
 from .jellyfin import JellyfinClient, JellyfinError, connect
 from .locallib import LocalLibrary, find_cover
 from .models import SOURCE_JELLYFIN, SOURCE_LOCAL, Album, Artist, Playlist, Track
@@ -66,8 +67,9 @@ HELP_TEXT = """\
 [bold]Library[/bold]
   /            search tracks                 f5 refresh current view
   esc          back                          tab switch panel focus
+  e            edit metadata (local tracks)
 
-[bold]Playlists (server)[/bold]
+[bold]Playlists (local or server)[/bold]
   n            new empty playlist            a  add highlighted track/album
   d            remove highlighted entry from current playlist
   D            delete playlist (on the playlist list)
@@ -129,7 +131,7 @@ class SetupScreen(DismissableScreen):
             )
             yield Input(
                 value=self._initial.get("folder", ""),
-                placeholder="Local music folder  Artist/Album (Year)/ layout",
+                placeholder="Local music folder  Artist/Album/ layout",
                 id="setup-folder",
             )
             with Horizontal(id="setup-buttons"):
@@ -226,6 +228,55 @@ class ConfirmScreen(DismissableScreen):
         self.dismiss(False)
 
 
+class EditMetadataScreen(DismissableScreen):
+    def __init__(self, track, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.track = track
+
+    def compose(self) -> ComposeResult:
+        t = self.track
+        with Vertical(id="edit-box"):
+            yield Label("[b]Edit Metadata[/b]")
+            yield Label("Artist", classes="section-title")
+            yield Input(value=t.artist or "", id="edit-artist")
+            yield Label("Album Artist", classes="section-title")
+            yield Input(value=getattr(t, "album_artist", "") or t.artist or "", id="edit-albumartist")
+            yield Label("Album", classes="section-title")
+            yield Input(value=t.album or "", id="edit-album")
+            yield Label("Title", classes="section-title")
+            yield Input(value=t.title or "", id="edit-title")
+            with Horizontal():
+                yield Input(value=str(t.track_number or 1), placeholder="Track", id="edit-track")
+                yield Input(value=str(getattr(t, "disc_number", 1) or 1), placeholder="Disc", id="edit-disc")
+                yield Input(value=str(t.year or ""), placeholder="Year", id="edit-year")
+            yield Label("Genre", classes="section-title")
+            yield Input(value=getattr(t, "genre", "") or "", placeholder="Genre", id="edit-genre")
+            with Horizontal(id="edit-buttons"):
+                yield Button("Save", variant="primary", id="edit-save")
+                yield Button("Cancel", id="edit-cancel")
+            yield Static("Advanced MBIDs shown read-only. After save, file tags and path will be updated.", classes="help")
+            if getattr(t, "mb_recording_id", None):
+                yield Static(f"MB Recording: {t.mb_recording_id}", classes="help")
+
+    @on(Button.Pressed, "#edit-save")
+    def save(self) -> None:
+        data = {
+            "artist": self.query_one("#edit-artist", Input).value.strip(),
+            "album_artist": self.query_one("#edit-albumartist", Input).value.strip(),
+            "album": self.query_one("#edit-album", Input).value.strip(),
+            "title": self.query_one("#edit-title", Input).value.strip(),
+            "track_number": self.query_one("#edit-track", Input).value.strip(),
+            "disc_number": self.query_one("#edit-disc", Input).value.strip(),
+            "year": self.query_one("#edit-year", Input).value.strip(),
+            "genre": self.query_one("#edit-genre", Input).value.strip(),
+        }
+        self.dismiss(data)
+
+    @on(Button.Pressed, "#edit-cancel")
+    def cancel(self) -> None:
+        self.dismiss(None)
+
+
 class HelpScreen(ModalScreen):
     AUTO_FOCUS = None
     BINDINGS = [
@@ -294,7 +345,7 @@ class ListenerApp(App):
     }
     #np-flags { margin-top: 1; }
 
-    #setup-box, #name-box, #add-box, #confirm-box, #help-box {
+    #setup-box, #name-box, #add-box, #confirm-box, #help-box, #edit-box {
         background: $surface;
         border: thick $primary;
         padding: 1 2;
@@ -302,14 +353,15 @@ class ListenerApp(App):
         margin: 1 2;
     }
     #help-box { width: 66; }
+    #edit-box { width: 78; }
     #setup-hint { color: $text-muted; margin-bottom: 1; }
-    #setup-box Input { margin-bottom: 1; }
-    #setup-buttons, #confirm-buttons {
+    #setup-box Input, #edit-box Input { margin-bottom: 1; }
+    #setup-buttons, #confirm-buttons, #edit-buttons {
         height: auto;
         margin-top: 1;
         align-horizontal: center;
     }
-    #setup-buttons Button, #confirm-buttons Button { margin: 0 1; }
+    #setup-buttons Button, #confirm-buttons Button, #edit-buttons Button { margin: 0 1; }
     #add-list { height: auto; max-height: 16; border-top: solid $boost; }
     #help-text { padding-bottom: 1; }
     """
@@ -332,6 +384,7 @@ class ListenerApp(App):
         Binding("r", "cycle_repeat", "Repeat", show=False),
         Binding("n", "new_playlist", "New playlist"),
         Binding("a", "add_to_playlist", "Add to playlist"),
+        Binding("e", "edit_metadata", "Edit", show=False),
         Binding("d", "remove_entry", "Remove", show=False),
         Binding("D", "delete_playlist", "Delete playlist", show=False),
         Binding("f5", "refresh", "Refresh", show=False),
@@ -688,7 +741,11 @@ class ListenerApp(App):
             ]
             return matched, "track", f"Search: {context.get('query', '')}"
         if level == LEVEL_PLAYLISTS or level == LEVEL_PLAYLIST_DETAIL:
-            raise RuntimeError("Playlists need a Jellyfin server connection")
+            playlists = localplaylists.playlists(snapshot.tracks)
+            if level == LEVEL_PLAYLISTS:
+                return playlists, "playlist", "Playlists"
+            playlist: Playlist = context["playlist"]
+            return localplaylists.tracks(playlist.id, snapshot.tracks), "track", playlist.name
         if level == LEVEL_ALBUM_DETAIL:
             album: Album = context["album"]
             matched = [t for t in snapshot.tracks if t.album_id == album.id]
@@ -1048,7 +1105,7 @@ class ListenerApp(App):
         return None
 
     def action_add_to_playlist(self) -> None:
-        if self.client is None:
+        if self.active_source == SOURCE_JELLYFIN and self.client is None:
             self.notify(
                 "Playlists need a Jellyfin server connection",
                 severity="warning",
@@ -1063,11 +1120,14 @@ class ListenerApp(App):
 
     @work(thread=True, group="plfetch", exclusive=True)
     def fetch_playlists_then_add(self, target: tuple[str, str]) -> None:
-        if self.client is None:
-            return
         try:
-            playlists = self.client.playlists()
-        except JellyfinError as error:
+            if self.active_source == SOURCE_LOCAL:
+                playlists = localplaylists.playlists(self.get_local_snapshot().tracks)
+            elif self.client is not None:
+                playlists = self.client.playlists()
+            else:
+                return
+        except (JellyfinError, ValueError) as error:
             self.call_from_thread(
                 self.notify, str(error), severity="error", timeout=8
             )
@@ -1090,11 +1150,14 @@ class ListenerApp(App):
 
     @work(thread=True, group="plcreate", exclusive=True)
     def create_playlist_worker(self, name: str, item_ids: list[str] | None = None) -> None:
-        if self.client is None:
-            return
         try:
-            self.client.create_playlist(name, item_ids or [])
-        except JellyfinError as error:
+            if self.active_source == SOURCE_LOCAL:
+                localplaylists.create(name, item_ids)
+            elif self.client is not None:
+                self.client.create_playlist(name, item_ids or [])
+            else:
+                return
+        except (JellyfinError, ValueError) as error:
             self.call_from_thread(
                 self.notify,
                 f"Could not create playlist: {error}",
@@ -1113,21 +1176,38 @@ class ListenerApp(App):
     def perform_add(self, destination: str, name_or_id: str) -> None:
         target = self._pending_target
         self._pending_target = None
-        if target is None or self.client is None:
+        if target is None:
             return
         kind, value = target
         try:
-            if kind == "album":
+            if self.active_source == SOURCE_LOCAL:
+                snapshot = self.get_local_snapshot()
+                ids = [track.id for track in snapshot.tracks if track.album_id == value] if kind == "album" else [value]
+                if destination == "new":
+                    localplaylists.create(name_or_id, ids)
+                    message = f"Created playlist '{name_or_id}' with {len(ids)} tracks"
+                else:
+                    localplaylists.add_tracks(name_or_id, ids)
+                    message = f"Added {len(ids)} track(s) to playlist"
+            elif self.client is not None and kind == "album":
                 ids = [t.id for t in self.client.album_tracks(value)]
-            else:
+                if destination == "new":
+                    self.client.create_playlist(name_or_id, ids)
+                    message = f"Created playlist '{name_or_id}' with {len(ids)} tracks"
+                else:
+                    self.client.add_to_playlist(name_or_id, ids)
+                    message = f"Added {len(ids)} track(s) to playlist"
+            elif self.client is not None:
                 ids = [value]
-            if destination == "new":
-                self.client.create_playlist(name_or_id, ids)
-                message = f"Created playlist '{name_or_id}' with {len(ids)} tracks"
+                if destination == "new":
+                    self.client.create_playlist(name_or_id, ids)
+                    message = f"Created playlist '{name_or_id}' with {len(ids)} tracks"
+                else:
+                    self.client.add_to_playlist(name_or_id, ids)
+                    message = f"Added {len(ids)} track(s) to playlist"
             else:
-                self.client.add_to_playlist(name_or_id, ids)
-                message = f"Added {len(ids)} track(s) to playlist"
-        except JellyfinError as error:
+                return
+        except (JellyfinError, ValueError) as error:
             self.call_from_thread(
                 self.notify, f"Add failed: {error}", severity="error", timeout=8
             )
@@ -1157,11 +1237,14 @@ class ListenerApp(App):
 
     @work(thread=True, group="plremove", exclusive=True)
     def remove_entries_worker(self, playlist_id: str, entry_ids: list[str]) -> None:
-        if self.client is None:
-            return
         try:
-            self.client.remove_from_playlist(playlist_id, entry_ids)
-        except JellyfinError as error:
+            if self.active_source == SOURCE_LOCAL:
+                localplaylists.remove_tracks(playlist_id, entry_ids)
+            elif self.client is not None:
+                self.client.remove_from_playlist(playlist_id, entry_ids)
+            else:
+                return
+        except (JellyfinError, ValueError) as error:
             self.call_from_thread(
                 self.notify, f"Remove failed: {error}", severity="error", timeout=8
             )
@@ -1187,16 +1270,95 @@ class ListenerApp(App):
 
     @work(thread=True, group="pldelete", exclusive=True)
     def delete_playlist_worker(self, playlist_id: str, name: str) -> None:
-        if self.client is None:
-            return
         try:
-            self.client.delete_playlist(playlist_id)
-        except JellyfinError as error:
+            if self.active_source == SOURCE_LOCAL:
+                localplaylists.delete(playlist_id)
+            elif self.client is not None:
+                self.client.delete_playlist(playlist_id)
+            else:
+                return
+        except (JellyfinError, ValueError) as error:
             self.call_from_thread(
                 self.notify, f"Delete failed: {error}", severity="error", timeout=8
             )
             return
         self.call_from_thread(self.notify, f"Deleted playlist '{name}'", timeout=3)
+        self.call_from_thread(self.reload_current)
+
+    def action_edit_metadata(self) -> None:
+        index = self.query_one("#table", LibraryTable).cursor_row
+        if index < 0 or index >= len(self.rows):
+            self.notify("Highlight a track first", timeout=3)
+            return
+        row = self.rows[index]
+        if not isinstance(row, Track):
+            self.notify("Select a track to edit", timeout=3)
+            return
+        if row.source != SOURCE_LOCAL:
+            self.notify("Metadata editing is for local tracks only", severity="warning", timeout=4)
+            return
+
+        def handle(result: Any) -> None:
+            if isinstance(result, dict):
+                self.apply_metadata_edit(row, result)
+
+        self.push_screen(EditMetadataScreen(row), handle)
+
+    @work(thread=True, group="editmeta", exclusive=True)
+    def apply_metadata_edit(self, track: Track, data: dict[str, str]) -> None:
+        from pathlib import Path as _Path
+        from .metadata import CanonicalMetadata, generate_canonical_path, sanitize_component, write_metadata
+
+        src = _Path(track.stream_ref)
+        if not src.exists():
+            self.call_from_thread(self.notify, f"File not found: {src}", severity="error", timeout=6)
+            return
+        # Build new metadata
+        try:
+            tn = int(data.get("track_number", "1").split("/")[0]) if data.get("track_number") else 1
+        except ValueError:
+            tn = 1
+        try:
+            dn = int(data.get("disc_number", "1").split("/")[0]) if data.get("disc_number") else 1
+        except ValueError:
+            dn = 1
+        meta = CanonicalMetadata(
+            title=data.get("title", track.title) or track.title,
+            artist=data.get("artist", track.artist) or track.artist,
+            album_artist=data.get("album_artist", getattr(track, "album_artist", "") or track.artist) or track.artist,
+            album=data.get("album", track.album) or track.album,
+            track_number=tn,
+            disc_number=dn,
+            year=data.get("year", str(track.year or "")) if data.get("year") is not None else str(track.year or ""),
+            genre=data.get("genre", getattr(track, "genre", "") or "") or "",
+            source_path=str(src),
+        )
+        # Write tags
+        if not write_metadata(src, meta):
+            self.call_from_thread(self.notify, "Could not write tags (unsupported format?)", severity="warning", timeout=6)
+        # Recalculate canonical path under music root
+        root = _Path(self.config.resolved_music_folder())
+        if not root.is_dir():
+            self.call_from_thread(self.notify, "Music folder not configured", severity="error", timeout=6)
+            return
+        dest = generate_canonical_path(root, meta)
+        # Use find_available_path logic with duplicate handling
+        from .metadata import find_available_path
+
+        actual = find_available_path(dest) if dest != src else dest
+        if actual != src:
+            try:
+                actual.parent.mkdir(parents=True, exist_ok=True)
+                # safe move via metadata pipeline logic (copy+verify not needed for single)
+                src.rename(actual)
+                self.call_from_thread(self.notify, f"Moved to {actual.relative_to(root)}", timeout=5)
+            except Exception as e:
+                self.call_from_thread(self.notify, f"Move failed: {e}", severity="error", timeout=6)
+                return
+        else:
+            self.call_from_thread(self.notify, "Metadata updated", timeout=4)
+        # Invalidate cache and reload
+        self.local_snapshot = None
         self.call_from_thread(self.reload_current)
 
     # ---------------------------------------------------------------- source
